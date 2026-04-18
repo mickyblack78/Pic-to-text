@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Basic OCR App</title>
+    <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+    <style>
+        body { font-family: sans-serif; padding: 20px; text-align: center; }
+        #output { width: 90%; height: 300px; margin-top: 20px; font-size: 16px; }
+        .btn { background: #007bff; color: white; padding: 15px; border: none; border-radius: 5px; font-size: 18px; }
+    </style>
+</head>
+<body>
+
+    <h2>Scan Document</h2>
+    <input type="file" id="cameraInput" accept="image/*" capture="environment" style="display:none">
+    <button class="btn" onclick="document.getElementById('cameraInput').click()">TAKE PHOTO</button>
+
+    <div id="status" style="margin: 20px 0;">Select a photo to start...</div>
+    <textarea id="output" placeholder="Text will appear here..."></textarea>
+
+    <script>
+        const cameraInput = document.getElementById('cameraInput');
+        const output = document.getElementById('output');
+        const status = document.getElementById('status');
+
+        cameraInput.addEventListener('change', (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+
+            status.innerText = "Recognizing text... please wait...";
+            
+            Tesseract.recognize(file, 'eng', {
+                logger: m => { if(m.status === 'recognizing text') status.innerText = `Progress: ${Math.round(m.progress * 100)}%`; }
+            }).then(({ data: { text } }) => {
+                status.innerText = "Done!";
+                output.value = text;
+            }).catch(err => {
+                status.innerText = "Error: " + err.message;
+            });
+        });
+    </script>
+
+</body>
+</html>

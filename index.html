@@ -1,44 +1,160 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-    <title> PIC to PDF</title>
-    <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
-    <style>
-        body { font-family: sans-serif; padding: 20px; text-align: center; }
-        #output { width: 90%; height: 300px; margin-top: 20px; font-size: 16px; }
-        .btn { background: #007bff; color: white; padding: 15px; border: none; border-radius: 5px; font-size: 18px; }
-    </style>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>ARCHITECT_990_CORE</title>
+<style>
+:root { --neon-cyan: #00ffff; --panel-bg: rgba(10, 10, 10, 0.95); --text-main: #ffffff; }
+* { margin: 0; padding: 0; box-sizing: border-box; user-select: none; -webkit-tap-highlight-color: transparent; }
+body { background: #050505; font-family: monospace; overflow: hidden; position: fixed; width: 100%; height: 100%; }
+
+#canvas-container { position: absolute; top: 0; left: 0; width: 100vw; height: 100vh; }
+canvas { position: absolute; top: 0; left: 0; image-rendering: pixelated; }
+
+/* THE DOCK */
+.architect-dock {
+  position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
+  z-index: 1000; display: flex; flex-direction: column; gap: 10px;
+  background: var(--panel-bg); padding: 15px; border: 1px solid var(--neon-cyan);
+  border-radius: 20px; box-shadow: 0 0 20px rgba(0,255,255,0.3); width: 95%; max-width: 450px;
+}
+.btn-row { display: flex; justify-content: space-between; gap: 5px; }
+.tool-btn {
+  flex: 1; height: 45px; background: #111; border: 1px solid #333; color: #666;
+  font-size: 10px; border-radius: 10px; display: flex; align-items: center; justify-content: center;
+}
+.tool-btn.active { border-color: var(--neon-cyan); color: var(--neon-cyan); box-shadow: 0 0 10px var(--neon-cyan); }
+
+/* COLOR PALETTE */
+.palette { display: grid; grid-template-columns: repeat(8, 1fr); gap: 4px; }
+.swatch { height: 20px; border-radius: 4px; border: 1px solid #222; }
+.swatch.active { border: 2px solid white; }
+
+/* VAULT OVERLAY */
+.vault {
+  position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
+  width: 80%; background: #000; border: 2px solid var(--neon-cyan);
+  padding: 20px; z-index: 2000; display: none; text-align: center;
+}
+.vault.active { display: block; }
+.vault-btn { width: 100%; padding: 15px; margin: 5px 0; background: #111; color: var(--neon-cyan); border: 1px solid #333; }
+</style>
 </head>
 <body>
 
-    <h2>Scan Document</h2>
-    <input type="file" id="cameraInput" accept="image/*" capture="environment" style="display:none">
-    <button class="btn" onclick="document.getElementById('cameraInput').click()">TAKE PHOTO</button>
+<div id="canvas-container">
+  <canvas id="main-canvas"></canvas>
+  <canvas id="temp-canvas"></canvas>
+</div>
 
-    <div id="status" style="margin: 20px 0;">Select a photo to start...</div>
-    <textarea id="output" placeholder="Text will appear here..."></textarea>
+<div class="architect-dock">
+  <div class="palette" id="palette"></div>
+  <div class="btn-row">
+    <div class="tool-btn active" id="mode-draw" onclick="setMode('draw')">DRAW</div>
+    <div class="tool-btn" id="mode-paste" onclick="setMode('paste')">STAMP</div>
+    <div class="tool-btn" onclick="executeUndo()">UNDO</div>
+    <div class="tool-btn" onclick="toggleVault()">VAULT</div>
+  </div>
+</div>
 
-    <script>
-        const cameraInput = document.getElementById('cameraInput');
-        const output = document.getElementById('output');
-        const status = document.getElementById('status');
+<div class="vault" id="vault">
+  <h3>MEMORY SLOTS</h3>
+  <div class="btn-row">
+    <button class="vault-btn" onclick="saveSlot(1)">SAVE 1</button>
+    <button class="vault-btn" onclick="saveSlot(2)">SAVE 2</button>
+  </div>
+  <div class="btn-row">
+    <button class="vault-btn" onclick="loadSlot(1)">LOAD 1</button>
+    <button class="vault-btn" onclick="loadSlot(2)">LOAD 2</button>
+  </div>
+  <button class="vault-btn" style="color:red" onclick="toggleVault()">CLOSE</button>
+</div>
 
-        cameraInput.addEventListener('change', (e) => {
-            const file = e.target.files[0];
-            if (!file) return;
+<script>
+const mCanvas = document.getElementById('main-canvas');
+const tCanvas = document.getElementById('temp-canvas');
+const mctx = mCanvas.getContext('2d');
+const tctx = tCanvas.getContext('2d');
 
-            status.innerText = "Recognizing text... please wait...";
-            
-            Tesseract.recognize(file, 'eng', {
-                logger: m => { if(m.status === 'recognizing text') status.innerText = `Progress: ${Math.round(m.progress * 100)}%`; }
-            }).then(({ data: { text } }) => {
-                status.innerText = "Done!";
-                output.value = text;
-            }).catch(err => {
-                status.innerText = "Error: " + err.message;
-            });
-        });
-    </script>
+const state = {
+  mode: 'draw', drawing: false, dpr: window.devicePixelRatio || 1,
+  color: '#00ffff', history: [], sticker: null, stickerX: 0, stickerY: 0
+};
 
+function init() {
+  const w = window.innerWidth, h = window.innerHeight;
+  mCanvas.width = tCanvas.width = w * state.dpr;
+  mCanvas.height = tCanvas.height = h * state.dpr;
+  mCanvas.style.width = tCanvas.style.width = w + 'px';
+  mCanvas.style.height = tCanvas.style.height = h + 'px';
+  mctx.scale(state.dpr, state.dpr); tctx.scale(state.dpr, state.dpr);
+  mctx.lineCap = 'round'; mctx.lineWidth = 3;
+  buildPalette(); pushHistory();
+}
+
+function buildPalette() {
+  const colors = ['#ff0000','#00ff00','#0000ff','#ffff00','#ff00ff','#00ffff','#ffffff','#888888','#8b4513','#ff8c00','#ffd700','#adff2f','#00ced1','#1e90ff','#9370db','#ff69b4'];
+  const p = document.getElementById('palette');
+  colors.forEach(c => {
+    const s = document.createElement('div');
+    s.className = 'swatch'; s.style.background = c;
+    s.onclick = () => { state.color = c; mctx.strokeStyle = c; document.querySelectorAll('.swatch').forEach(x => x.classList.remove('active')); s.classList.add('active'); };
+    p.appendChild(s);
+  });
+}
+
+function getP(e) {
+  const t = e.touches[0];
+  return { x: t.clientX, y: t.clientY };
+}
+
+function setMode(m) {
+  state.mode = m;
+  document.querySelectorAll('.tool-btn').forEach(b => b.classList.remove('active'));
+  document.getElementById('mode-' + m).classList.add('active');
+}
+
+tCanvas.addEventListener('touchstart', (e) => {
+  e.preventDefault();
+  const p = getP(e); state.drawing = true;
+  if (state.mode === 'draw') { mctx.beginPath(); mctx.moveTo(p.x, p.y); }
+}, {passive: false});
+
+tCanvas.addEventListener('touchmove', (e) => {
+  e.preventDefault();
+  if (!state.drawing) return;
+  const p = getP(e);
+  if (state.mode === 'draw') { mctx.lineTo(p.x, p.y); mctx.stroke(); }
+}, {passive: false});
+
+tCanvas.addEventListener('touchend', () => { 
+  if(state.drawing) pushHistory();
+  state.drawing = false; 
+});
+
+function pushHistory() {
+  if (state.history.length > 20) state.history.shift();
+  state.history.push(mctx.getImageData(0,0,mCanvas.width,mCanvas.height));
+}
+
+function executeUndo() {
+  if (state.history.length < 2) return;
+  state.history.pop();
+  mctx.putImageData(state.history[state.history.length - 1], 0, 0);
+}
+
+function toggleVault() { document.getElementById('vault').classList.toggle('active'); }
+function saveSlot(n) { localStorage.setItem('SLOT_'+n, mCanvas.toDataURL()); alert('Saved to Slot ' + n); }
+function loadSlot(n) {
+  const data = localStorage.getItem('SLOT_'+n);
+  if (!data) return;
+  const img = new Image();
+  img.onload = () => { mctx.clearRect(0,0,mCanvas.width,mCanvas.height); mctx.drawImage(img,0,0,window.innerWidth,window.innerHeight); pushHistory(); };
+  img.src = data;
+}
+
+window.onload = init;
+</script>
 </body>
 </html>
